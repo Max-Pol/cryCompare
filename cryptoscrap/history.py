@@ -8,10 +8,10 @@ __histodayurl = 'https://min-api.cryptocompare.com/data/histoday?'
 def histo_minute(from_curr, to_curr, e=None, extra_params=None, sign=False,
                  try_conversion=True, aggregate=None, limit=None, to_ts=None):
     """
-    Get open, high, low, close, volumefrom and volumeto from the each minute 
-    historical data. This data is only stored for 7 days, if you need more, 
+    Get open, high, low, close, volumefrom and volumeto from the each minute
+    historical data. This data is only stored for 7 days, if you need more,
     use the hourly or daily path.
-    
+
     :param from_curr From symbol (fsym)
     :param to_curr To symbol (tsym)
     :param e: Exchange (str)
@@ -29,10 +29,10 @@ def histo_minute(from_curr, to_curr, e=None, extra_params=None, sign=False,
 def histo_hour(from_curr, to_curr, e=None, extra_params=None, sign=False,
                try_conversion=True, aggregate=None, limit=None, to_ts=None):
     """
-    Get open, high, low, close, volumefrom and volumeto from the each hour 
-    historical data. It uses BTC conversion if data is not available 
+    Get open, high, low, close, volumefrom and volumeto from the each hour
+    historical data. It uses BTC conversion if data is not available
     because the coin is not trading in the specified currency.
-    
+
     :param from_curr From symbol (fsym)
     :param to_curr To symbol (tsym)
     :param e: Exchange (str)
@@ -51,9 +51,9 @@ def histo_day(from_curr, to_curr, e=None, extra_params=None, sign=False,
               try_conversion=True, aggregate=None, limit=None, to_ts=None,
               all_data=False):
     """
-    Get open, high, low, close, volumefrom and volumeto daily historical data. 
+    Get open, high, low, close, volumefrom and volumeto daily historical data.
     The values are based on 00:00 GMT time.
-    
+
     :param from_curr From symbol (fsym)
     :param to_curr To symbol (tsym)
     :param e: Exchange (str)
@@ -107,6 +107,8 @@ def __get_url(url):
         raw_data.raise_for_status()
         return False
     try:
+        if raw_data.json()['Response'] != "Success":
+            raise ValueError('Cryptocompare API Error: %s' % raw_data.json()['Message'])
         return raw_data.json()['Data']
     except NameError:
         raise ValueError('Cannot parse to json.')

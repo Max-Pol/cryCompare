@@ -296,6 +296,8 @@ def __get_url(url):
         raw_data.raise_for_status()
         return False
     try:
+        if raw_data.json()['Response'] != "Success":
+            raise ValueError('Cryptocompare API Error: %s' % raw_data.json()['Message'])
         return raw_data.json()
     except NameError:
         raise ValueError('Cannot parse to json.')
