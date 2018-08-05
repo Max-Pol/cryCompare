@@ -1,0 +1,14 @@
+version: '2'
+
+services:
+  cryptoscrap:
+    build: .
+    container_name: cryptoscrap
+    restart: unless-stopped
+    environment:
+    - PATH_DATA=/data
+    - DELAY_START=300           # Wait 5min at startup
+    - DELAY_BETWEEN_SCRAP=3600  # Wait 1h between every scrap
+    - REFRESH_RATE=86400        # Wait 24h between every scraping session
+    volumes:
+    - ${PATH_DATA}:/data/
