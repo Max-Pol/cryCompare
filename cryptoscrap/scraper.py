@@ -1,8 +1,11 @@
 import os
 import re
 import time
+import sys
+import socket
 from datetime import datetime
 import pandas as pd
+import logging
 
 from .history import histo_day, histo_hour, histo_minute
 from .price import coin_list
@@ -17,6 +20,9 @@ COINMARKETCAP_TO_CRYPTOCOMPARE = {"MIOTA": "IOT",
                                   "NANO": "XRB",
                                   "ETHOS": "BQX"}
 CRYPTOCOMPARE_EXPECTED_ERROR = r"(.*)only available for the last 7 days(.*)"
+CRYPTOCOMPARE_NO_DATA_ERROR = r"Cryptocompare API Error: There is no data for the symbol(.*)"
+REMOTE_SERVER = "www.google.com"  # to check internet connection
+INTERNET_CHECK_RATE = 30 * 60  # 30 minutes
 
 
 class Scraper():
@@ -24,7 +30,7 @@ class Scraper():
     Scraper to dump easily the CryptoCompare Histo data (day, hour and minutes)
     into csv files.
     """
-    def __init__(self, path_root):
+    def __init__(self, path_root, logger=None):
         """
         :param path_root: path where the csv files will be saved
         """
@@ -33,73 +39,76 @@ class Scraper():
         self.path_day = os.path.join(path_root, "day")
         self.path_hour = os.path.join(path_root, "hour")
         self.path_minute = os.path.join(path_root, "minute")
+        self.path_coin_ignore = os.path.join(path_root, "coin_ignore_list.csv")
+
+        # Create a stdout logger if None
+        if logger is None:
+            log = logging.getLogger()
+            log.setLevel(logging.INFO)
+
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - '
+                                          '%(message)s')
+            handler.setFormatter(formatter)
+            log.addHandler(handler)
+            self.log = log
+        else:
+            self.log = logger
 
         # Create missing directory
         for directory in [self.path_day, self.path_hour, self.path_minute]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
-    # Scraping methods
-    def scrap_day(self, to_curr="BTC", update=True):
+    # Scrap all method
+    def scrap(self, rate, to_curr="BTC", update=True, verbose=1):
         """
-        Scrap all the daily data of active coins.
+        Scrap all the data of active coins.
 
-        :params update: if set to True, the Scraper will try to append
+        :param rate: minute/hour/day
+        :param update: if set to True, the Scraper will try to append
                         existing data.
         """
-        coinlist = [coin for coin in self.get_active_coin_list()
+        scrap_coin_func = {
+            "minute": self.scrap_coin_minute,
+            "hour": self.scrap_coin_hour,
+            "day": self.scrap_coin_day
+        }
+
+        coinlist = [coin for coin in self.get_active_coin_list(verbose=verbose)
                     if coin != to_curr]
-        print("\nScrapping daily data for %d coins..." % len(coinlist))
+        self.log.info("Scrapping %s %s data for %d coins..."
+                      % (to_curr, rate, len(coinlist)))
+        success = []
         for c in coinlist:
             try:
-                self.scrap_coin_day(c, to_curr, update=update)
+                scrap_coin_func[rate](c, to_curr, update=update,
+                                      verbose=verbose)
+                success.append(c)
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                print("ERROR: failed to scrap coin %s: %s" % (c, str(e)))
+                # If no data error, add the coin ignore list
+                if re.match(CRYPTOCOMPARE_NO_DATA_ERROR, str(e)):
+                    with open(self.path_coin_ignore, "a") as f:
+                        f.write(c + "\n")
+                    self.log.warning("No data for the symbol %s, "
+                                     "coin added to ignore list." % c)
+                else:
+                    self.log.error("Failed to scrap coin %s: %s" % (c, str(e)))
+        self.log.info("Successfully scraped %s %s data for %d coins"
+                      % (to_curr, rate, len(success)))
 
-    def scrap_hour(self, to_curr="BTC", update=True):
-        """
-        Scrap all the hourly data of active coins.
-
-        :params update: if set to True, the Scraper will try to append
-                        existing data.
-        """
-        coinlist = [coin for coin in self.get_active_coin_list()
-                    if coin != to_curr]
-        print("\nScrapping hourly data for %d coins..." % len(coinlist))
-        for c in coinlist:
-            try:
-                self.scrap_coin_hour(c, to_curr, update=update)
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print("ERROR: failed to scrap coin %s: %s" % (c, str(e)))
-
-    def scrap_minute(self, to_curr="BTC", update=True):
-        """
-        Scrap all the minute data of active coins.
-
-        :params update: if set to True, the Scraper will try to append
-                        existing data.
-        """
-        coinlist = [coin for coin in self.get_active_coin_list()
-                    if coin != to_curr]
-        print("\nScrapping minute data for %d coins..." % len(coinlist))
-        for c in coinlist:
-            try:
-                self.scrap_coin_minute(c, to_curr, update=update)
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print("ERROR: failed to scrap coin %s: %s" % (c, str(e)))
-
-    # Dumping methods
-    def scrap_coin_day(self, from_curr, to_curr="BTC", update=True):
+    # Individual coin scraping methods
+    def scrap_coin_day(self, from_curr, to_curr="BTC", update=True, verbose=1):
         """
         Dump CryptoCompare HistoDay data into a csv.
         """
-        print("Scraping daily data of market %s-%s..." % (from_curr, to_curr))
+        if verbose:
+            self.log.info("Scraping daily data of market %s-%s..."
+                          % (from_curr, to_curr))
+        self.wait_for_internet_connection(INTERNET_CHECK_RATE)
         filename = from_curr + "-" + to_curr + ".csv"
         csv_path = os.path.join(self.path_day, filename)
 
@@ -111,7 +120,7 @@ class Scraper():
         df.to_csv(csv_path, index=False)
 
     def scrap_coin_hour(self, from_curr, to_curr="BTC",
-                        update=True, verbose=False):
+                        update=True, verbose=1):
         """
         Dump CryptoCompare HistoHour data into a csv.
 
@@ -119,7 +128,10 @@ class Scraper():
         existing data in the root path, and retrieve only the missing
         data from CryptoCompare.
         """
-        print("Scraping hourly data of market %s-%s..." % (from_curr, to_curr))
+        if verbose:
+            self.log.info("Scraping hourly data of market %s-%s..."
+                          % (from_curr, to_curr))
+        self.wait_for_internet_connection(INTERNET_CHECK_RATE)
         filename = from_curr + "-" + to_curr + ".csv"
         csv_path = os.path.join(self.path_hour, filename)
 
@@ -141,9 +153,6 @@ class Scraper():
         while df.loc[0, "high"] > 0 and df.loc[0, "time"] > ts_end:
             ts = int(df.head(1)["time"])
 
-            if verbose:
-                print("[Cryptocompare] API Call: %s-%s, to date %s"
-                      % (from_curr, to_curr, ts_to_str(ts)))
             data = histo_hour(from_curr, to_curr,
                               limit=HISTO_LIMIT, to_ts=ts - 1)
             df2 = pd.DataFrame(data, columns=CSV_HEADER)
@@ -168,7 +177,7 @@ class Scraper():
         df.to_csv(csv_path, index=False)
 
     def scrap_coin_minute(self, from_curr, to_curr="BTC",
-                          update=True, verbose=False):
+                          update=True, verbose=1):
         """
         Dump CryptoCompare HistoMinute data into a csv.
 
@@ -176,7 +185,10 @@ class Scraper():
         existing data in the root path, and retrieve only the missing
         data from CryptoCompare.
         """
-        print("Scraping minute data of market %s-%s..." % (from_curr, to_curr))
+        if verbose:
+            self.log.info("Scraping minute data of market %s-%s..."
+                          % (from_curr, to_curr))
+        self.wait_for_internet_connection(INTERNET_CHECK_RATE)
         filename = from_curr + "-" + to_curr + ".csv"
         csv_path = os.path.join(self.path_minute, filename)
 
@@ -198,9 +210,6 @@ class Scraper():
         while df.loc[0, "high"] > 0 and df.loc[0, "time"] > ts_end:
             ts = int(df.head(1)["time"])
 
-            if verbose:
-                print("[Cryptocompare] API Call: %s-%s, to date %s"
-                      % (from_curr, to_curr, ts_to_str(ts)))
             try:
                 data = histo_minute(from_curr, to_curr,
                                     limit=HISTO_LIMIT, to_ts=ts - 1)
@@ -230,37 +239,57 @@ class Scraper():
 
         df.to_csv(csv_path, index=False)
 
-    def get_active_coin_list(self):
+    def get_active_coin_list(self, verbose=1):
         """
         Return a list of active coins, sorted by market cap.
         To be eligible, the coin need to be referenced on both
-        Cryptocompare and Coinmarketcap.
+        Cryptocompare and Coinmarketcap, and not be referenced
+        in coin_ignore_list.csv.
 
         :return: list
         """
+        self.wait_for_internet_connection(INTERNET_CHECK_RATE)
+
+        # Retrieve coins to ignore
+        ignore_list = pd.read_csv(self.path_coin_ignore, header=None)
 
         # Retrieve active coin list from CoinMarketCap,
-        # sorted by marketcap
+        # sorted by marketcap, and remove ignore list
         df = pd.read_json(COINMARKETCAP_TICKER_URL)
-        cmc_list = df["symbol"].tolist()
+        len_CMC = len(df.symbol)
+        df = df[~df.symbol.isin(ignore_list[0].values)]
+        active_list = df.symbol.tolist()
 
         # Retrieve coin list from CryptoCompare
         cc_list = list(coin_list()["Data"].keys())
 
         # Solve different naming issues
         # (for instance: CryptoCompare IOT = CoinMarketCap MIOTA)
-        for idx, crypto in enumerate(cmc_list):
+        for idx, crypto in enumerate(active_list):
             if crypto in list(COINMARKETCAP_TO_CRYPTOCOMPARE.keys()):
-                cmc_list[idx] = COINMARKETCAP_TO_CRYPTOCOMPARE[crypto]
+                active_list[idx] = COINMARKETCAP_TO_CRYPTOCOMPARE[crypto]
 
         # Intersection of CoinMarketCap and CryptoCompare list
-        common_list = [k for k in cmc_list if k in cc_list]
+        inter_list = [k for k in active_list if k in cc_list]
 
-        print("%d available coins on CoinMarketCap" % (len(cmc_list)))
-        print("%d available coins on CryptoCompare" % (len(cc_list)))
-        print("%d available coins in common" % len(common_list))
+        if verbose:
+            self.log.info("%d coins available on CoinMarketCap" % (len_CMC))
+            self.log.info("%d coins available on CryptoCompare"
+                          % (len(cc_list)))
+            self.log.info("%d coins on ignore list" % (len(ignore_list)))
+            self.log.info("%d active coins available for scraping"
+                          % len(inter_list))
 
-        return common_list
+        return inter_list
+
+    def check_for_updates(self, rate, to_curr, max_timedelta):
+        return True
+
+    def wait_for_internet_connection(self, check_rate):
+        while not is_connected(REMOTE_SERVER):
+            self.log.info("No internet connection. Trying again in %d min..."
+                          % int(check_rate / 60))
+            time.sleep(check_rate)
 
 
 # Utils
@@ -273,3 +302,17 @@ def str_to_ts(date_str, str_format=DATE_FORMAT):
     """Convert datetime string to timestamp"""
     dt = datetime.strptime(date_str, str_format)
     return time.mktime(dt.timetuple())
+
+
+def is_connected(hostname):
+    """Check if internet connection is available"""
+    try:
+        # see if we can resolve the host name -- tells us if there is
+        # a DNS listening
+        host = socket.gethostbyname(hostname)
+        # connect to the host -- tells us if the host is actually
+        # reachable
+        socket.create_connection((host, 80), 2)
+        return True
+    except:
+        return False

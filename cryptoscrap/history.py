@@ -65,8 +65,8 @@ def histo_day(from_curr, to_curr, e=None, extra_params=None, sign=False,
     :param to_ts
     :param all_data
     """
-    return __get_price(__histodayurl, from_curr, to_curr, e, extra_params, sign,
-                       try_conversion, aggregate, limit, to_ts, all_data)
+    return __get_price(__histodayurl, from_curr, to_curr, e, extra_params,
+                       sign, try_conversion, aggregate, limit, to_ts, all_data)
 
 
 def __get_price(base_url, from_curr, to_curr, e=None, extra_params=None,
@@ -108,7 +108,8 @@ def __get_url(url):
         return False
     try:
         if raw_data.json()['Response'] != "Success":
-            raise ValueError('Cryptocompare API Error: %s' % raw_data.json()['Message'])
+            raise ValueError('Cryptocompare API Error: %s'
+                             % raw_data.json()['Message'])
         return raw_data.json()['Data']
     except NameError:
         raise ValueError('Cannot parse to json.')
